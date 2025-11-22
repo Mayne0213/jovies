@@ -57,20 +57,24 @@ jobs:
           echo "full_image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
           echo "🐳 Deploying image: ${FULL_IMAGE}"
 
-      - name: Make scripts executable
+      - name: Create namespace if not exists
         run: |
-          chmod +x ./scripts/common.sh
-          chmod +x ./scripts/k8s-deploy.sh
+          kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy to Kubernetes using script
+      - name: Deploy to Kubernetes
         run: |
-          ./scripts/k8s-deploy.sh \
-            --namespace ${{ env.K8S_NAMESPACE }} \
-            --no-build \
-            --app-image ${{ steps.image.outputs.full_image }} \
-            --yes
-        env:
-          TERM: dumb
+          echo "🚀 Applying Kubernetes manifests..."
+          kubectl apply -f deploy/k8s/ -n ${{ env.K8S_NAMESPACE }}
+
+          echo "🔄 Updating deployment image..."
+          kubectl set image deployment/jovies-app \
+            jovies-app=${{ steps.image.outputs.full_image }} \
+            -n ${{ env.K8S_NAMESPACE }}
+
+          kubectl patch deployment jovies-app \
+            -n ${{ env.K8S_NAMESPACE }} \
+            --type='json' \
+            -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
 
       - name: Wait for rollout to complete
         run: |
