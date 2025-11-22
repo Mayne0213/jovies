@@ -52,7 +52,9 @@ jobs:
             TAG="main-$(echo ${{ github.sha }} | cut -c1-7)"
           fi
 
-          FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          # Convert repository name to lowercase for Docker
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          FULL_IMAGE="${{ env.REGISTRY }}/${REPO_LOWER}:${TAG}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "full_image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
           echo "🐳 Deploying image: ${FULL_IMAGE}"
