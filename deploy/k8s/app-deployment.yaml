@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: jovies-app
+  name: jovies-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jovies-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: jovies-app
+    spec:
+      containers:
+        - name: jovies-app
+          image: jovies-app-image:latest
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      restartPolicy: Always

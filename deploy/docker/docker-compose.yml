@@ -1,0 +1,22 @@
+services:
+  # Production Jovies Next.js Application
+  app:
+    image: jovies-app
+    build:
+      context: ../../services/nextjs
+      dockerfile: ../../deploy/docker/Dockerfile.prod
+    container_name: jovies-app-prod
+    restart: unless-stopped
+    labels:
+      kompose.namespace: jovies
+    ports:
+      - 3003:3000
+    environment:
+      - NODE_ENV=production
+    networks:
+      - jovies-network
+
+networks:
+  jovies-network:
+    driver: bridge
+    name: jovies-network-prod

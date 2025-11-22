@@ -1,0 +1,111 @@
+name: Deploy to Kubernetes
+
+on:
+  workflow_run:
+    workflows: ["Build Docker Image"]
+    types:
+      - completed
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy (e.g., main-abc1234)'
+        required: false
+        default: 'latest'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  K8S_NAMESPACE: jovies
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure kubectl with Lightsail
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+          # Verify connection
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Determine image tag
+        id: image
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.image_tag }}"
+          else
+            # Use the commit SHA from the workflow_run event
+            TAG="main-$(echo ${{ github.sha }} | cut -c1-7)"
+          fi
+
+          FULL_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "full_image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
+          echo "🐳 Deploying image: ${FULL_IMAGE}"
+
+      - name: Make scripts executable
+        run: |
+          chmod +x ./scripts/common.sh
+          chmod +x ./scripts/k8s-deploy.sh
+
+      - name: Deploy to Kubernetes using script
+        run: |
+          ./scripts/k8s-deploy.sh \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --no-build \
+            --app-image ${{ steps.image.outputs.full_image }}
+        env:
+          TERM: dumb
+
+      - name: Wait for rollout to complete
+        run: |
+          echo "⏳ Waiting for deployment rollout..."
+          kubectl rollout status deployment/jovies-app \
+            -n ${{ env.K8S_NAMESPACE }} \
+            --timeout=5m
+
+      - name: Verify deployment
+        run: |
+          echo "📊 Deployment status:"
+          kubectl get deployments -n ${{ env.K8S_NAMESPACE }}
+
+          echo ""
+          echo "🔍 Pod status:"
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }}
+
+          echo ""
+          echo "🌐 Service status:"
+          kubectl get services -n ${{ env.K8S_NAMESPACE }}
+
+      - name: Get deployment info
+        run: |
+          echo "✅ Deployment completed!"
+          echo ""
+          echo "📦 Deployed image: ${{ steps.image.outputs.full_image }}"
+          echo "🏷️  Namespace: ${{ env.K8S_NAMESPACE }}"
+          echo ""
+          echo "🔗 Useful commands:"
+          echo "  - View logs: kubectl logs -n ${{ env.K8S_NAMESPACE }} -l app=jovies-app -f"
+          echo "  - Port forward: kubectl port-forward -n ${{ env.K8S_NAMESPACE }} deploy/jovies-app 3000:3000"
+          echo "  - Rollback: kubectl rollout undo deployment/jovies-app -n ${{ env.K8S_NAMESPACE }}"
+
+      - name: Deployment failure notification
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Check logs with: kubectl logs -n ${{ env.K8S_NAMESPACE }} -l app=jovies-app"
+          exit 1
