@@ -59,20 +59,20 @@ jobs:
 
       - name: Create namespace if not exists
         run: |
-          kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace jovies --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy to Kubernetes
         run: |
           echo "🚀 Applying Kubernetes manifests..."
-          kubectl apply -f deploy/k8s/ -n ${{ env.K8S_NAMESPACE }}
+          kubectl apply -f deploy/k8s/ -n jovies
 
           echo "🔄 Updating deployment image..."
           kubectl set image deployment/jovies-app \
             jovies-app=${{ steps.image.outputs.full_image }} \
-            -n ${{ env.K8S_NAMESPACE }}
+            -n jovies
 
           kubectl patch deployment jovies-app \
-            -n ${{ env.K8S_NAMESPACE }} \
+            -n jovies \
             --type='json' \
             -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
 
@@ -80,37 +80,37 @@ jobs:
         run: |
           echo "⏳ Waiting for deployment rollout..."
           kubectl rollout status deployment/jovies-app \
-            -n ${{ env.K8S_NAMESPACE }} \
+            -n jovies \
             --timeout=5m
 
       - name: Verify deployment
         run: |
           echo "📊 Deployment status:"
-          kubectl get deployments -n ${{ env.K8S_NAMESPACE }}
+          kubectl get deployments -n jovies
 
           echo ""
           echo "🔍 Pod status:"
-          kubectl get pods -n ${{ env.K8S_NAMESPACE }}
+          kubectl get pods -n jovies
 
           echo ""
           echo "🌐 Service status:"
-          kubectl get services -n ${{ env.K8S_NAMESPACE }}
+          kubectl get services -n jovies
 
       - name: Get deployment info
         run: |
           echo "✅ Deployment completed!"
           echo ""
           echo "📦 Deployed image: ${{ steps.image.outputs.full_image }}"
-          echo "🏷️  Namespace: ${{ env.K8S_NAMESPACE }}"
+          echo "🏷️  Namespace: jovies"
           echo ""
           echo "🔗 Useful commands:"
-          echo "  - View logs: kubectl logs -n ${{ env.K8S_NAMESPACE }} -l app=jovies-app -f"
-          echo "  - Port forward: kubectl port-forward -n ${{ env.K8S_NAMESPACE }} deploy/jovies-app 3000:3000"
-          echo "  - Rollback: kubectl rollout undo deployment/jovies-app -n ${{ env.K8S_NAMESPACE }}"
+          echo "  - View logs: kubectl logs -n jovies -l app=jovies-app -f"
+          echo "  - Port forward: kubectl port-forward -n jovies deploy/jovies-app 3000:3000"
+          echo "  - Rollback: kubectl rollout undo deployment/jovies-app -n jovies"
 
       - name: Deployment failure notification
         if: failure()
         run: |
           echo "❌ Deployment failed!"
-          echo "Check logs with: kubectl logs -n ${{ env.K8S_NAMESPACE }} -l app=jovies-app"
+          echo "Check logs with: kubectl logs -n jovies -l app=jovies-app"
           exit 1
