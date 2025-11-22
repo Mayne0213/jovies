@@ -9,7 +9,7 @@ setup_script
 
 print_usage() {
     echo ""
-    echo "사용법: $(basename "$0") [-n NAMESPACE] [-c CONTEXT] [--app-image IMAGE[:TAG]] [--build|--no-build] [--tag TAG] [--dry-run]"
+    echo "사용법: $(basename "$0") [-n NAMESPACE] [-c CONTEXT] [--app-image IMAGE[:TAG]] [--build|--no-build] [--tag TAG] [--dry-run] [--yes]"
     echo "  -n, --namespace   Kubernetes 네임스페이스 (기본: jovies)"
     echo "  -c, --context     kubectl 컨텍스트 지정 (kubectl config current-context 기본)"
     echo "      --app-image   app 디플로이먼트에 사용할 이미지 레퍼런스(예: your/repo:jovies)"
@@ -17,6 +17,7 @@ print_usage() {
     echo "      --no-build    빌드 생략"
     echo "      --tag         --build 시 사용할 이미지 태그 (기본: jovies-app:local-<timestamp>)"
     echo "      --dry-run     실제 적용 대신 미리보기 수행"
+    echo "  -y, --yes         확인 프롬프트 건너뛰기"
     echo ""
 }
 
@@ -27,6 +28,7 @@ DRY_RUN="false"
 APP_IMAGE=""
 DO_BUILD="true"
 IMAGE_TAG=""
+SKIP_CONFIRM="false"
 
 # 인자 파싱
 while [[ $# -gt 0 ]]; do
@@ -45,6 +47,8 @@ while [[ $# -gt 0 ]]; do
             DO_BUILD="false"; shift ;;
         --tag)
             IMAGE_TAG="$2"; shift; shift ;;
+        -y|--yes)
+            SKIP_CONFIRM="true"; shift ;;
         -h|--help)
             print_usage; exit 0 ;;
         *)
@@ -129,9 +133,11 @@ if grep -qE "^\s*image:\s*app(\s|$)" "$K8S_DIR/app-deployment.yaml" 2>/dev/null;
 fi
 
 # 확인 후 진행
-if ! confirm_action "계속 진행하시겠습니까?" "Y"; then
-    log_warn "사용자에 의해 취소되었습니다."
-    exit 0
+if [[ "$SKIP_CONFIRM" != "true" ]]; then
+    if ! confirm_action "계속 진행하시겠습니까?" "Y"; then
+        log_warn "사용자에 의해 취소되었습니다."
+        exit 0
+    fi
 fi
 
 echo ""

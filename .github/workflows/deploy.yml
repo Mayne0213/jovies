@@ -67,7 +67,8 @@ jobs:
           ./scripts/k8s-deploy.sh \
             --namespace ${{ env.K8S_NAMESPACE }} \
             --no-build \
-            --app-image ${{ steps.image.outputs.full_image }}
+            --app-image ${{ steps.image.outputs.full_image }} \
+            --yes
         env:
           TERM: dumb
 
