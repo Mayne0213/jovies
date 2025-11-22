@@ -53,7 +53,7 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: ./services/nextjs
+          context: .
           file: ./deploy/docker/Dockerfile.prod
           push: true
           tags: ${{ steps.meta.outputs.tags }}
