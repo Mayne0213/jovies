@@ -1,0 +1,27 @@
+services:
+  # Development Jovies Next.js Application
+  app:
+    build:
+      context: ../../services
+      dockerfile: ../deploy/docker/Dockerfile.dev
+    container_name: jovies-app-dev
+    restart: unless-stopped
+    labels:
+      kompose.namespace: jovies
+    ports:
+      - 3003:3000
+    environment:
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true
+    networks:
+      - jovies-network
+    volumes:
+      - ../../services:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+
+networks:
+  jovies-network:
+    driver: bridge
+    name: jovies-network-dev
