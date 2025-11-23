@@ -1,3 +1,3 @@
 export default function AboutUs(){
-    return <div>gfdgd</div>
+    return <div>Practice app for K8s</div>
 }
