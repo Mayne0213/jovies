@@ -72,3 +72,6 @@ jobs:
           echo "📦 Image tags:"
           echo "${{ steps.meta.outputs.tags }}"
           echo "🔖 Digest: ${{ steps.build.outputs.digest }}"
+          echo ""
+          echo "🚀 ArgoCD will automatically detect and deploy this new image"
+          echo "   Monitor deployment at your ArgoCD dashboard"
