@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: jovies-quota
+  namespace: jovies
+spec:
+  hard:
+    requests.memory: "100Mi"
+    requests.cpu: "100m"
+    limits.memory: "150Mi"
+    limits.cpu: "200m"
+    pods: "2"
