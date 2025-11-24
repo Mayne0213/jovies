@@ -5,6 +5,7 @@ namespace: jovies
 
 resources:
   - ../../base
+  - resourcequota.yaml
 
 commonLabels:
   environment: production
