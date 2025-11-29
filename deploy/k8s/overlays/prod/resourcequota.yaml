@@ -5,8 +5,8 @@ metadata:
   namespace: jovies
 spec:
   hard:
-    requests.memory: "100Mi"
-    requests.cpu: "100m"
-    limits.memory: "150Mi"
-    limits.cpu: "200m"
-    pods: "2"
+    requests.memory: "200Mi"
+    requests.cpu: "200m"
+    limits.memory: "300Mi"
+    limits.cpu: "400m"
+    pods: "3"
