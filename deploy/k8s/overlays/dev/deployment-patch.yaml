@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jovies-app
+  labels:
+    environment: development
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: jovies-app
+          resources:
+            requests:
+              memory: "42Mi"
+              cpu: "35m"
+            limits:
+              memory: "84Mi"
+              cpu: "105m"

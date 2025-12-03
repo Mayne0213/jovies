@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jovies-dev
+  labels:
+    environment: development
+    app: jovies
