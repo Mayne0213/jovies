@@ -13,7 +13,7 @@ commonLabels:
 # 이미지 태그 설정
 images:
   - name: ghcr.io/mayne0213/jovies
-    newTag: main-sha-a1729a14cc8e68a86f1e2cea013acd005521f21f
+    newTag: main-sha-f42d874d8e371e2b136b52dbfa2b5b85ea548ae3
 
 patchesStrategicMerge:
   - deployment-patch.yaml
