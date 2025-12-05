@@ -12,8 +12,7 @@ spec:
         - name: jovies-app
           resources:
             requests:
-              memory: "42Mi"
-              cpu: "35m"
+              memory: "40Mi"
+              cpu: "10m"
             limits:
-              memory: "84Mi"
-              cpu: "105m"
+              memory: "100Mi"
