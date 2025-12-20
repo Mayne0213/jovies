@@ -10,7 +10,6 @@ on:
 env:
   REGISTRY: gitea0213.kro.kr
   IMAGE_NAME: ${{ github.repository }}
-  DOCKER_HOST: tcp://172.17.0.1:2375
 
 jobs:
   build-and-push:
@@ -27,9 +26,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Log in to Gitea Container Registry
+      - name: Prepare Kaniko credentials
         run: |
-          echo "${{ secrets.GITEAREGISTRY}}" | docker login ${{ env.REGISTRY }} -u bluemayne --password-stdin
+          mkdir -p /tmp/kaniko-config
+          echo "{\"auths\":{\"${{ env.REGISTRY }}\":{\"auth\":\"$(echo -n bluemayne:${{ secrets.GITEAREGISTRY }} | base64)\"}}}" > /tmp/kaniko-config/config.json
 
       - name: Lowercase repository name
         id: lowercase
@@ -49,33 +49,34 @@ jobs:
             type=sha,prefix={{branch}}-sha-,format=long
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Docker image
+      - name: Build and push with Kaniko
         id: build
         run: |
           TAGS="${{ steps.meta.outputs.tags }}"
 
-          # Build the image
-          docker build \
-            -t $(echo "$TAGS" | head -n 1) \
-            -f ./deploy/docker/Dockerfile.prod \
-            ./services/nextjs
+          # Prepare destination arguments for all tags
+          DESTINATIONS=""
+          while IFS= read -r tag; do
+            DESTINATIONS="$DESTINATIONS --destination=$tag"
+          done <<< "$TAGS"
 
-          # Tag all versions
+          # Build and push with Kaniko (with cache)
+          docker run --rm \
+            -v $(pwd):/workspace \
+            -v /tmp/kaniko-config:/kaniko/.docker:ro \
+            gcr.io/kaniko-project/executor:arm64-latest \
+            --context=/workspace/services/nextjs \
+            --dockerfile=/workspace/deploy/docker/Dockerfile.prod \
+            $DESTINATIONS \
+            --cache=true \
+            --cache-repo=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache \
+            --compressed-caching=false \
+            --snapshot-mode=redo \
+            --use-new-run
+
+          # Get first tag for digest extraction
           FIRST_TAG=$(echo "$TAGS" | head -n 1)
-          echo "$TAGS" | while read tag; do
-            if [ "$tag" != "$FIRST_TAG" ]; then
-              docker tag "$FIRST_TAG" "$tag"
-            fi
-          done
-
-          # Push all tags
-          echo "$TAGS" | while read tag; do
-            docker push "$tag"
-          done
-
-          # Get digest
-          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$FIRST_TAG" | cut -d'@' -f2)
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "digest=unknown" >> $GITHUB_OUTPUT
 
       - name: Extract SHA tag
         id: extract-tag
