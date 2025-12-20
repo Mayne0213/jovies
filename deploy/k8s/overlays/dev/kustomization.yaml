@@ -13,7 +13,7 @@ commonLabels:
 
 # 이미지 태그 설정
 images:
-  - name: ghcr.io/mayne0213/jovies
+  - name: gitea0213.kro.kr/mayne0213/jovies
     newTag: develop-sha-bed2d09069c0a4a2f83dfd74a8489dcf67625a7d
 
 patchesStrategicMerge:
