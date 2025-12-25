@@ -1,0 +1,40 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jovies-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # HTTP를 HTTPS로 자동 리다이렉트
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # cert-manager가 인증서를 자동으로 발급하도록 설정
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: haproxy
+  # TLS 설정
+  tls:
+  - hosts:
+    - jovies.kro.kr
+    - www.jovies.kro.kr
+    # cert-manager가 이 이름으로 Secret을 자동 생성
+    secretName: jovies-tls
+  rules:
+    - host: jovies.kro.kr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jovies-service
+                port:
+                  number: 80
+    - host: www.jovies.kro.kr
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jovies-service
+                port:
+                  number: 80
