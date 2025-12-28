@@ -38,10 +38,31 @@ jobs:
       - name: Setup kubeconfig
         run: |
           mkdir -p $HOME/.kube
-          sudo cat /etc/rancher/k3s/k3s.yaml > $HOME/.kube/config
+
+          # Check if K3s config exists locally
+          if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+            sudo cat /etc/rancher/k3s/k3s.yaml > $HOME/.kube/config
+          else
+            # If not, try to get it from master node
+            echo "K3s config not found locally, checking runner location..."
+            hostname
+            pwd
+            whoami
+
+            # Try to copy from master node via sudo (if runner has access)
+            if sudo test -f /etc/rancher/k3s/k3s.yaml; then
+              sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
+              sudo chown $(whoami):$(whoami) $HOME/.kube/config
+            else
+              echo "❌ ERROR: Cannot find kubeconfig. Please configure KUBECONFIG secret."
+              exit 1
+            fi
+          fi
+
           chmod 600 $HOME/.kube/config
-          export KUBECONFIG=$HOME/.kube/config
-          kubectl get nodes
+
+          # Test connection
+          kubectl get nodes || sudo kubectl get nodes
 
       - name: Lowercase repository name
         id: lowercase
