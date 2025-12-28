@@ -26,11 +26,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Prepare Kaniko credentials
-        run: |
-          mkdir -p /tmp/kaniko-config
-          echo "{\"auths\":{\"${{ env.REGISTRY }}\":{\"auth\":\"$(echo -n bluemayne:${{ secrets.GITEAREGISTRY }} | base64)\"}}}" > /tmp/kaniko-config/config.json
-
       - name: Lowercase repository name
         id: lowercase
         run: |
@@ -49,37 +44,123 @@ jobs:
             type=sha,prefix={{branch}}-sha-,format=long
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Download Kaniko executor
+      - name: Create Kaniko build context
         run: |
-          wget -O /tmp/kaniko-executor https://github.com/GoogleContainerTools/kaniko/releases/download/v1.23.2/executor-arm64
-          chmod +x /tmp/kaniko-executor
+          # Create tar.gz of build context
+          tar czf /tmp/build-context.tar.gz -C services/nextjs .
 
-      - name: Build and push with Kaniko
+          # Create namespace if not exists
+          sudo kubectl get namespace kaniko-builds 2>/dev/null || sudo kubectl create namespace kaniko-builds
+
+          # Create/update registry credentials secret
+          sudo kubectl create secret docker-registry kaniko-registry-creds \
+            --docker-server=${{ env.REGISTRY }} \
+            --docker-username=bluemayne \
+            --docker-password=${{ secrets.GITEAREGISTRY }} \
+            --namespace=kaniko-builds \
+            --dry-run=client -o yaml | sudo kubectl apply -f -
+
+      - name: Build and push with Kaniko on Kubernetes
         id: build
         run: |
           TAGS="${{ steps.meta.outputs.tags }}"
 
-          # Prepare destination arguments for all tags
+          # Prepare destination arguments
           DESTINATIONS=""
           while IFS= read -r tag; do
             DESTINATIONS="$DESTINATIONS --destination=$tag"
           done <<< "$TAGS"
 
-          # Build and push with Kaniko (with cache)
-          /tmp/kaniko-executor \
-            --context=$(pwd)/services/nextjs \
-            --dockerfile=$(pwd)/deploy/docker/Dockerfile.prod \
-            --docker-config=/tmp/kaniko-config \
-            $DESTINATIONS \
-            --cache=true \
-            --cache-repo=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache \
-            --compressed-caching=false \
-            --snapshot-mode=redo \
-            --use-new-run
+          # Create temporary pod name
+          POD_NAME="kaniko-build-${{ github.run_number }}-$(date +%s)"
 
-          # Get first tag for digest extraction
-          FIRST_TAG=$(echo "$TAGS" | head -n 1)
+          # Create Kaniko Job
+          cat <<EOF | sudo kubectl apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: ${POD_NAME}-context
+            namespace: kaniko-builds
+          data:
+            Dockerfile: |
+          $(sed 's/^/      /' deploy/docker/Dockerfile.prod)
+          ---
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${POD_NAME}
+            namespace: kaniko-builds
+          spec:
+            ttlSecondsAfterFinished: 600
+            backoffLimit: 0
+            template:
+              spec:
+                restartPolicy: Never
+                initContainers:
+                - name: prepare-context
+                  image: alpine:latest
+                  command: ["/bin/sh", "-c"]
+                  args:
+                    - |
+                      apk add --no-cache git
+                      git clone https://gitea0213.kro.kr/${{ github.repository }}.git /workspace/repo
+                      cd /workspace/repo
+                      git checkout ${{ github.sha }}
+                      cp -r services/nextjs/* /workspace/build/
+                  volumeMounts:
+                  - name: workspace
+                    mountPath: /workspace
+                containers:
+                - name: kaniko
+                  image: gcr.io/kaniko-project/executor:latest
+                  args:
+                    - --context=/workspace/build
+                    - --dockerfile=/workspace/Dockerfile
+                    - --cache=true
+                    - --cache-repo=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache
+                    - --compressed-caching=false
+                    - --snapshot-mode=redo
+                    - --use-new-run
+                    $DESTINATIONS
+                  volumeMounts:
+                  - name: workspace
+                    mountPath: /workspace
+                  - name: dockerfile
+                    mountPath: /workspace/Dockerfile
+                    subPath: Dockerfile
+                  - name: docker-config
+                    mountPath: /kaniko/.docker
+                volumes:
+                - name: workspace
+                  emptyDir: {}
+                - name: dockerfile
+                  configMap:
+                    name: ${POD_NAME}-context
+                - name: docker-config
+                  secret:
+                    secretName: kaniko-registry-creds
+                    items:
+                    - key: .dockerconfigjson
+                      path: config.json
+          EOF
+
+          # Wait for job to complete
+          echo "Waiting for Kaniko job to complete..."
+          sudo kubectl wait --for=condition=complete --timeout=600s job/${POD_NAME} -n kaniko-builds || {
+            echo "Job failed or timed out. Showing logs:"
+            POD=$(sudo kubectl get pods -n kaniko-builds -l job-name=${POD_NAME} -o jsonpath='{.items[0].metadata.name}')
+            sudo kubectl logs -n kaniko-builds ${POD} --all-containers=true || true
+            sudo kubectl delete job ${POD_NAME} -n kaniko-builds || true
+            sudo kubectl delete configmap ${POD_NAME}-context -n kaniko-builds || true
+            exit 1
+          }
+
+          echo "✅ Image built successfully"
           echo "digest=unknown" >> $GITHUB_OUTPUT
+
+          # Cleanup
+          sudo kubectl delete job ${POD_NAME} -n kaniko-builds || true
+          sudo kubectl delete configmap ${POD_NAME}-context -n kaniko-builds || true
 
       - name: Extract SHA tag
         id: extract-tag
