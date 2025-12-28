@@ -41,12 +41,27 @@ jobs:
         run: |
           if [ -z "$KUBECONFIG_B64" ]; then
             echo "❌ KUBECONFIG secret not set"
-            echo "Please add KUBECONFIG to repository secrets"
+            echo ""
+            echo "Please add KUBECONFIG to Gitea repository secrets:"
+            echo "1. Go to: https://gitea0213.kro.kr/bluemayne/jovies/settings/secrets"
+            echo "2. Add new secret:"
+            echo "   Name: KUBECONFIG"
+            echo "   Value: <base64 encoded kubeconfig>"
             exit 1
           fi
 
+          echo "📝 KUBECONFIG secret found (length: ${#KUBECONFIG_B64})"
+
           mkdir -p $HOME/.kube
-          echo "$KUBECONFIG_B64" | base64 -d > $HOME/.kube/config
+
+          # Decode base64 (handle both single-line and multi-line)
+          echo "$KUBECONFIG_B64" | tr -d '\n' | base64 -d > $HOME/.kube/config || {
+            echo "❌ Failed to decode KUBECONFIG"
+            echo "Secret length: ${#KUBECONFIG_B64}"
+            echo "First 50 chars: ${KUBECONFIG_B64:0:50}..."
+            exit 1
+          }
+
           chmod 600 $HOME/.kube/config
 
           echo "✅ Kubeconfig configured"
