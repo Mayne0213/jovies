@@ -49,6 +49,11 @@ jobs:
             type=sha,prefix={{branch}}-sha-,format=long
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Download Kaniko executor
+        run: |
+          wget -O /tmp/kaniko-executor https://github.com/GoogleContainerTools/kaniko/releases/download/v1.23.2/executor-arm64
+          chmod +x /tmp/kaniko-executor
+
       - name: Build and push with Kaniko
         id: build
         run: |
@@ -61,12 +66,10 @@ jobs:
           done <<< "$TAGS"
 
           # Build and push with Kaniko (with cache)
-          docker run --rm \
-            -v $(pwd):/workspace \
-            -v /tmp/kaniko-config:/kaniko/.docker:ro \
-            gcr.io/kaniko-project/executor:arm64-latest \
-            --context=/workspace/services/nextjs \
-            --dockerfile=/workspace/deploy/docker/Dockerfile.prod \
+          /tmp/kaniko-executor \
+            --context=$(pwd)/services/nextjs \
+            --dockerfile=$(pwd)/deploy/docker/Dockerfile.prod \
+            --docker-config=/tmp/kaniko-config \
             $DESTINATIONS \
             --cache=true \
             --cache-repo=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache \
