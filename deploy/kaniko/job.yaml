@@ -28,11 +28,19 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
           - |
+            set -e
+            echo "Cloning repository..."
             git clone GIT_REPO_URL /workspace/repo
             cd /workspace/repo
             git checkout GIT_SHA
+
+            echo "Preparing build context..."
+            mkdir -p /workspace/build
             cp -r services/nextjs/* /workspace/build/
             cp deploy/docker/Dockerfile.prod /workspace/build/Dockerfile
+
+            echo "Build context ready:"
+            ls -la /workspace/build/
         volumeMounts:
         - name: workspace
           mountPath: /workspace
