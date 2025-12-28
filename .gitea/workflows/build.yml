@@ -26,6 +26,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install kubectl
+        run: |
+          if ! command -v kubectl &> /dev/null; then
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+          fi
+          kubectl version --client
+
+      - name: Setup kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          sudo cat /etc/rancher/k3s/k3s.yaml > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+          export KUBECONFIG=$HOME/.kube/config
+          kubectl get nodes
+
       - name: Lowercase repository name
         id: lowercase
         run: |
