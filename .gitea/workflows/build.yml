@@ -36,33 +36,24 @@ jobs:
           kubectl version --client
 
       - name: Setup kubeconfig
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
         run: |
           mkdir -p $HOME/.kube
 
-          # Check if K3s config exists locally
-          if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-            sudo cat /etc/rancher/k3s/k3s.yaml > $HOME/.kube/config
-          else
-            # If not, try to get it from master node
-            echo "K3s config not found locally, checking runner location..."
-            hostname
-            pwd
-            whoami
-
-            # Try to copy from master node via sudo (if runner has access)
-            if sudo test -f /etc/rancher/k3s/k3s.yaml; then
-              sudo cp /etc/rancher/k3s/k3s.yaml $HOME/.kube/config
-              sudo chown $(whoami):$(whoami) $HOME/.kube/config
-            else
-              echo "❌ ERROR: Cannot find kubeconfig. Please configure KUBECONFIG secret."
-              exit 1
-            fi
+          if [ -z "$KUBECONFIG_CONTENT" ]; then
+            echo "❌ ERROR: KUBECONFIG secret is not set."
+            echo "Please add kubeconfig to Gitea Secrets with name 'KUBECONFIG'"
+            exit 1
           fi
 
+          # Decode and save kubeconfig
+          echo "$KUBECONFIG_CONTENT" | base64 -d > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
 
           # Test connection
-          kubectl get nodes || sudo kubectl get nodes
+          echo "Testing Kubernetes connection..."
+          kubectl get nodes -o wide
 
       - name: Lowercase repository name
         id: lowercase
