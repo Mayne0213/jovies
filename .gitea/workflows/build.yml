@@ -85,99 +85,47 @@ jobs:
           # Prepare destination arguments
           DESTINATIONS=""
           while IFS= read -r tag; do
-            DESTINATIONS="$DESTINATIONS --destination=$tag"
+            DESTINATIONS="$DESTINATIONS\n          - --destination=$tag"
           done <<< "$TAGS"
 
-          # Create temporary pod name
-          POD_NAME="kaniko-build-${{ github.run_number }}-$(date +%s)"
+          # Create unique build name
+          BUILD_NAME="kaniko-build-${{ github.run_number }}-$(date +%s)"
 
-          # Create Kaniko Job
-          cat <<EOF | sudo kubectl apply -f -
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: ${POD_NAME}-context
-            namespace: kaniko-builds
-          data:
-            Dockerfile: |
-          $(sed 's/^/      /' deploy/docker/Dockerfile.prod)
-          ---
-          apiVersion: batch/v1
-          kind: Job
-          metadata:
-            name: ${POD_NAME}
-            namespace: kaniko-builds
-          spec:
-            ttlSecondsAfterFinished: 600
-            backoffLimit: 0
-            template:
-              spec:
-                restartPolicy: Never
-                initContainers:
-                - name: prepare-context
-                  image: alpine:latest
-                  command: ["/bin/sh", "-c"]
-                  args:
-                    - |
-                      apk add --no-cache git
-                      git clone https://gitea0213.kro.kr/${{ github.repository }}.git /workspace/repo
-                      cd /workspace/repo
-                      git checkout ${{ github.sha }}
-                      cp -r services/nextjs/* /workspace/build/
-                  volumeMounts:
-                  - name: workspace
-                    mountPath: /workspace
-                containers:
-                - name: kaniko
-                  image: gcr.io/kaniko-project/executor:latest
-                  args:
-                    - --context=/workspace/build
-                    - --dockerfile=/workspace/Dockerfile
-                    - --cache=true
-                    - --cache-repo=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache
-                    - --compressed-caching=false
-                    - --snapshot-mode=redo
-                    - --use-new-run
-                    $DESTINATIONS
-                  volumeMounts:
-                  - name: workspace
-                    mountPath: /workspace
-                  - name: dockerfile
-                    mountPath: /workspace/Dockerfile
-                    subPath: Dockerfile
-                  - name: docker-config
-                    mountPath: /kaniko/.docker
-                volumes:
-                - name: workspace
-                  emptyDir: {}
-                - name: dockerfile
-                  configMap:
-                    name: ${POD_NAME}-context
-                - name: docker-config
-                  secret:
-                    secretName: kaniko-registry-creds
-                    items:
-                    - key: .dockerconfigjson
-                      path: config.json
-          EOF
+          # Prepare Kaniko Job manifest from template
+          sed -e "s|KANIKO_BUILD_NAME|${BUILD_NAME}|g" \
+              -e "s|GIT_REPO_URL|https://gitea0213.kro.kr/${{ github.repository }}.git|g" \
+              -e "s|GIT_SHA|${{ github.sha }}|g" \
+              -e "s|CACHE_REPO|${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache|g" \
+              -e "s|# DESTINATIONS will be added here|${DESTINATIONS}|g" \
+              deploy/kaniko/job.yaml > /tmp/kaniko-job.yaml
+
+          echo "📋 Generated Kaniko Job manifest:"
+          cat /tmp/kaniko-job.yaml
+
+          # Apply the Job
+          sudo kubectl apply -f /tmp/kaniko-job.yaml
 
           # Wait for job to complete
-          echo "Waiting for Kaniko job to complete..."
-          sudo kubectl wait --for=condition=complete --timeout=600s job/${POD_NAME} -n kaniko-builds || {
-            echo "Job failed or timed out. Showing logs:"
-            POD=$(sudo kubectl get pods -n kaniko-builds -l job-name=${POD_NAME} -o jsonpath='{.items[0].metadata.name}')
+          echo "⏳ Waiting for Kaniko job to complete..."
+          sudo kubectl wait --for=condition=complete --timeout=600s job/${BUILD_NAME} -n kaniko-builds || {
+            echo "❌ Job failed or timed out. Showing logs:"
+            POD=$(sudo kubectl get pods -n kaniko-builds -l job-name=${BUILD_NAME} -o jsonpath='{.items[0].metadata.name}')
             sudo kubectl logs -n kaniko-builds ${POD} --all-containers=true || true
-            sudo kubectl delete job ${POD_NAME} -n kaniko-builds || true
-            sudo kubectl delete configmap ${POD_NAME}-context -n kaniko-builds || true
+            sudo kubectl delete job ${BUILD_NAME} -n kaniko-builds || true
+            sudo kubectl delete configmap ${BUILD_NAME}-dockerfile -n kaniko-builds || true
             exit 1
           }
 
           echo "✅ Image built successfully"
-          echo "digest=unknown" >> $GITHUB_OUTPUT
+
+          # Get digest from logs
+          POD=$(sudo kubectl get pods -n kaniko-builds -l job-name=${BUILD_NAME} -o jsonpath='{.items[0].metadata.name}')
+          DIGEST=$(sudo kubectl logs -n kaniko-builds ${POD} -c kaniko 2>/dev/null | grep -oP 'digest: \K[a-zA-Z0-9:]+' | tail -1 || echo "unknown")
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
 
           # Cleanup
-          sudo kubectl delete job ${POD_NAME} -n kaniko-builds || true
-          sudo kubectl delete configmap ${POD_NAME}-context -n kaniko-builds || true
+          sudo kubectl delete job ${BUILD_NAME} -n kaniko-builds || true
+          sudo kubectl delete configmap ${BUILD_NAME}-dockerfile -n kaniko-builds || true
 
       - name: Extract SHA tag
         id: extract-tag

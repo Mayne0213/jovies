@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: KANIKO_BUILD_NAME-dockerfile
+  namespace: kaniko-builds
+data:
+  Dockerfile: |
+    # This will be replaced by the actual Dockerfile content
+    DOCKERFILE_CONTENT
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: KANIKO_BUILD_NAME
+  namespace: kaniko-builds
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: kaniko-build
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: prepare-context
+        image: alpine/git:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            git clone GIT_REPO_URL /workspace/repo
+            cd /workspace/repo
+            git checkout GIT_SHA
+            cp -r services/nextjs/* /workspace/build/
+            cp deploy/docker/Dockerfile.prod /workspace/build/Dockerfile
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+          - --context=/workspace/build
+          - --dockerfile=/workspace/build/Dockerfile
+          - --cache=true
+          - --cache-repo=CACHE_REPO
+          - --compressed-caching=false
+          - --snapshot-mode=redo
+          - --use-new-run
+          - --verbosity=info
+          # DESTINATIONS will be added here
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: docker-config
+          mountPath: /kaniko/.docker
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+      volumes:
+      - name: workspace
+        emptyDir: {}
+      - name: docker-config
+        secret:
+          secretName: kaniko-registry-creds
+          items:
+          - key: .dockerconfigjson
+            path: config.json
