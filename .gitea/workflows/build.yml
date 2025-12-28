@@ -18,9 +18,6 @@ jobs:
       contents: write
       packages: write
 
-    env:
-      KUBECONFIG: /tmp/kubeconfig
-
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
       image-digest: ${{ steps.build.outputs.digest }}
@@ -29,63 +26,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install kubectl
+      - name: Verify Docker access
         run: |
-          if ! command -v kubectl &> /dev/null; then
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/
-          fi
-          kubectl version --client
-
-      - name: Setup Kubernetes access
-        run: |
-          # Running in Kubernetes Pod - create kubeconfig from ServiceAccount
-          echo "Setting up in-cluster kubeconfig"
-
-          SA_PATH="/var/run/secrets/kubernetes.io/serviceaccount"
-
-          if [ ! -f "${SA_PATH}/token" ]; then
-            echo "❌ ServiceAccount token not found"
-            exit 1
-          fi
-
-          echo "✅ ServiceAccount token found"
-
-          # Get cluster info
-          KUBE_HOST="${KUBERNETES_SERVICE_HOST:-kubernetes.default.svc}"
-          KUBE_PORT="${KUBERNETES_SERVICE_PORT:-443}"
-          KUBE_URL="https://${KUBE_HOST}:${KUBE_PORT}"
-
-          echo "Kubernetes API: ${KUBE_URL}"
-
-          # Create kubeconfig
-          cat > ${KUBECONFIG} <<EOF
-          apiVersion: v1
-          kind: Config
-          clusters:
-          - cluster:
-              certificate-authority: ${SA_PATH}/ca.crt
-              server: ${KUBE_URL}
-            name: default
-          contexts:
-          - context:
-              cluster: default
-              namespace: $(cat ${SA_PATH}/namespace)
-              user: default
-            name: default
-          current-context: default
-          users:
-          - name: default
-            user:
-              tokenFile: ${SA_PATH}/token
-          EOF
-
-          chmod 600 ${KUBECONFIG}
-
-          # Test connection
-          kubectl version
-          kubectl get nodes -o wide
+          echo "Checking Docker availability..."
+          docker version
+          docker info | head -20
 
       - name: Lowercase repository name
         id: lowercase
@@ -105,68 +50,42 @@ jobs:
             type=sha,prefix={{branch}}-sha-,format=long
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Create Kaniko build context
+      - name: Prepare Kaniko credentials
         run: |
-          # Create namespace if not exists (will be created by ArgoCD, but check anyway)
-          kubectl get namespace kaniko-builds 2>/dev/null || kubectl create namespace kaniko-builds
+          mkdir -p /tmp/kaniko-config
+          echo "{\"auths\":{\"${{ env.REGISTRY }}\":{\"auth\":\"$(echo -n bluemayne:${{ secrets.GITEAREGISTRY }} | base64)\"}}}" > /tmp/kaniko-config/config.json
 
-          # Create/update registry credentials secret
-          kubectl create secret docker-registry kaniko-registry-creds \
-            --docker-server=${{ env.REGISTRY }} \
-            --docker-username=bluemayne \
-            --docker-password=${{ secrets.GITEAREGISTRY }} \
-            --namespace=kaniko-builds \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Build and push with Kaniko on Kubernetes
+      - name: Build and push with Kaniko (Docker)
         id: build
         run: |
           TAGS="${{ steps.meta.outputs.tags }}"
 
-          # Prepare destination arguments
+          # Prepare destination arguments for all tags
           DESTINATIONS=""
           while IFS= read -r tag; do
-            DESTINATIONS="$DESTINATIONS\n          - --destination=$tag"
+            DESTINATIONS="$DESTINATIONS --destination=$tag"
           done <<< "$TAGS"
 
-          # Create unique build name
-          BUILD_NAME="kaniko-build-${{ github.run_number }}-$(date +%s)"
+          echo "📦 Building image with tags:"
+          echo "$TAGS"
 
-          # Prepare Kaniko Job manifest from template
-          sed -e "s|KANIKO_BUILD_NAME|${BUILD_NAME}|g" \
-              -e "s|GIT_REPO_URL|https://gitea0213.kro.kr/${{ github.repository }}.git|g" \
-              -e "s|GIT_SHA|${{ github.sha }}|g" \
-              -e "s|CACHE_REPO|${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache|g" \
-              -e "s|# DESTINATIONS will be added here|${DESTINATIONS}|g" \
-              deploy/kaniko/job.yaml > /tmp/kaniko-job.yaml
+          # Build and push with Kaniko via Docker
+          docker run --rm \
+            -v $(pwd):/workspace \
+            -v /tmp/kaniko-config:/kaniko/.docker:ro \
+            gcr.io/kaniko-project/executor:latest \
+            --context=/workspace/services/nextjs \
+            --dockerfile=/workspace/deploy/docker/Dockerfile.prod \
+            $DESTINATIONS \
+            --cache=true \
+            --cache-repo=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache \
+            --compressed-caching=false \
+            --snapshot-mode=redo \
+            --use-new-run \
+            --verbosity=info
 
-          echo "📋 Generated Kaniko Job manifest:"
-          cat /tmp/kaniko-job.yaml
-
-          # Apply the Job
-          kubectl apply -f /tmp/kaniko-job.yaml
-
-          # Wait for job to complete
-          echo "⏳ Waiting for Kaniko job to complete..."
-          kubectl wait --for=condition=complete --timeout=600s job/${BUILD_NAME} -n kaniko-builds || {
-            echo "❌ Job failed or timed out. Showing logs:"
-            POD=$(kubectl get pods -n kaniko-builds -l job-name=${BUILD_NAME} -o jsonpath='{.items[0].metadata.name}')
-            kubectl logs -n kaniko-builds ${POD} --all-containers=true || true
-            kubectl delete job ${BUILD_NAME} -n kaniko-builds || true
-            kubectl delete configmap ${BUILD_NAME}-dockerfile -n kaniko-builds || true
-            exit 1
-          }
-
-          echo "✅ Image built successfully"
-
-          # Get digest from logs
-          POD=$(kubectl get pods -n kaniko-builds -l job-name=${BUILD_NAME} -o jsonpath='{.items[0].metadata.name}')
-          DIGEST=$(kubectl logs -n kaniko-builds ${POD} -c kaniko 2>/dev/null | grep -oP 'digest: \K[a-zA-Z0-9:]+' | tail -1 || echo "unknown")
-          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
-
-          # Cleanup
-          kubectl delete job ${BUILD_NAME} -n kaniko-builds || true
-          kubectl delete configmap ${BUILD_NAME}-dockerfile -n kaniko-builds || true
+          echo "✅ Image built and pushed successfully"
+          echo "digest=unknown" >> $GITHUB_OUTPUT
 
       - name: Extract SHA tag
         id: extract-tag
