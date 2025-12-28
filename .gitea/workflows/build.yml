@@ -28,12 +28,28 @@ jobs:
 
       - name: Setup kubectl
         run: |
-          if ! command -v kubectl &> /dev/null; then
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl"
+          if command -v kubectl &> /dev/null; then
+            echo "✅ kubectl already installed"
+            kubectl version --client
+          else
+            echo "📥 Installing kubectl..."
+            # Use specific version to avoid querying stable.txt
+            KUBECTL_VERSION="v1.31.0"
+            curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/arm64/kubectl" &
+            DOWNLOAD_PID=$!
+
+            # Show progress
+            while kill -0 $DOWNLOAD_PID 2>/dev/null; do
+              echo -n "."
+              sleep 1
+            done
+            wait $DOWNLOAD_PID
+
+            echo ""
             chmod +x kubectl
             sudo mv kubectl /usr/local/bin/
+            kubectl version --client
           fi
-          kubectl version --client
 
       - name: Setup kubeconfig from Secret
         env:
