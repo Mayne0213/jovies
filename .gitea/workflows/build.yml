@@ -26,11 +26,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Verify Docker access
+      - name: Setup kubectl
         run: |
-          echo "Checking Docker availability..."
-          docker version
-          docker info | head -20
+          if ! command -v kubectl &> /dev/null; then
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/arm64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+          fi
+          kubectl version --client
+
+      - name: Setup kubeconfig from Secret
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+        run: |
+          if [ -z "$KUBECONFIG_B64" ]; then
+            echo "❌ KUBECONFIG secret not set"
+            echo "Please add KUBECONFIG to repository secrets"
+            exit 1
+          fi
+
+          mkdir -p $HOME/.kube
+          echo "$KUBECONFIG_B64" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+          echo "✅ Kubeconfig configured"
+          kubectl cluster-info
+          kubectl get nodes -o wide
 
       - name: Lowercase repository name
         id: lowercase
@@ -50,42 +71,67 @@ jobs:
             type=sha,prefix={{branch}}-sha-,format=long
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Prepare Kaniko credentials
+      - name: Create registry credentials in Kubernetes
         run: |
-          mkdir -p /tmp/kaniko-config
-          echo "{\"auths\":{\"${{ env.REGISTRY }}\":{\"auth\":\"$(echo -n bluemayne:${{ secrets.GITEAREGISTRY }} | base64)\"}}}" > /tmp/kaniko-config/config.json
+          # Ensure namespace exists
+          kubectl get namespace kaniko-builds 2>/dev/null || kubectl create namespace kaniko-builds
 
-      - name: Build and push with Kaniko (Docker)
+          # Create/update registry secret
+          kubectl create secret docker-registry kaniko-registry-creds \
+            --docker-server=${{ env.REGISTRY }} \
+            --docker-username=bluemayne \
+            --docker-password=${{ secrets.GITEAREGISTRY }} \
+            --namespace=kaniko-builds \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Build and push with Kaniko Job
         id: build
         run: |
           TAGS="${{ steps.meta.outputs.tags }}"
 
-          # Prepare destination arguments for all tags
+          # Prepare destination arguments
           DESTINATIONS=""
           while IFS= read -r tag; do
-            DESTINATIONS="$DESTINATIONS --destination=$tag"
+            DESTINATIONS="$DESTINATIONS\n          - --destination=$tag"
           done <<< "$TAGS"
 
-          echo "📦 Building image with tags:"
-          echo "$TAGS"
+          # Create unique build name
+          BUILD_NAME="kaniko-build-${{ github.run_number }}-$(date +%s)"
 
-          # Build and push with Kaniko via Docker
-          docker run --rm \
-            -v $(pwd):/workspace \
-            -v /tmp/kaniko-config:/kaniko/.docker:ro \
-            gcr.io/kaniko-project/executor:latest \
-            --context=/workspace/services/nextjs \
-            --dockerfile=/workspace/deploy/docker/Dockerfile.prod \
-            $DESTINATIONS \
-            --cache=true \
-            --cache-repo=${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache \
-            --compressed-caching=false \
-            --snapshot-mode=redo \
-            --use-new-run \
-            --verbosity=info
+          echo "📦 Building image: ${BUILD_NAME}"
+          echo "Tags: $TAGS"
 
-          echo "✅ Image built and pushed successfully"
-          echo "digest=unknown" >> $GITHUB_OUTPUT
+          # Generate Kaniko Job from template
+          sed -e "s|KANIKO_BUILD_NAME|${BUILD_NAME}|g" \
+              -e "s|GIT_REPO_URL|https://gitea0213.kro.kr/${{ github.repository }}.git|g" \
+              -e "s|GIT_SHA|${{ github.sha }}|g" \
+              -e "s|CACHE_REPO|${{ env.REGISTRY }}/${{ steps.lowercase.outputs.repo }}/cache|g" \
+              -e "s|# DESTINATIONS will be added here|${DESTINATIONS}|g" \
+              deploy/kaniko/job.yaml > /tmp/kaniko-job.yaml
+
+          # Apply Job
+          kubectl apply -f /tmp/kaniko-job.yaml
+
+          # Wait for completion
+          echo "⏳ Waiting for Kaniko Job to complete..."
+          kubectl wait --for=condition=complete --timeout=600s job/${BUILD_NAME} -n kaniko-builds || {
+            echo "❌ Job failed or timed out"
+            POD=$(kubectl get pods -n kaniko-builds -l job-name=${BUILD_NAME} -o jsonpath='{.items[0].metadata.name}')
+            echo "📋 Logs:"
+            kubectl logs -n kaniko-builds ${POD} --all-containers=true || true
+            kubectl delete job ${BUILD_NAME} -n kaniko-builds || true
+            exit 1
+          }
+
+          echo "✅ Image built successfully"
+
+          # Get digest
+          POD=$(kubectl get pods -n kaniko-builds -l job-name=${BUILD_NAME} -o jsonpath='{.items[0].metadata.name}')
+          DIGEST=$(kubectl logs -n kaniko-builds ${POD} -c kaniko 2>/dev/null | grep -oP 'digest: \K[a-zA-Z0-9:]+' | tail -1 || echo "unknown")
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+
+          # Cleanup
+          kubectl delete job ${BUILD_NAME} -n kaniko-builds || true
 
       - name: Extract SHA tag
         id: extract-tag
