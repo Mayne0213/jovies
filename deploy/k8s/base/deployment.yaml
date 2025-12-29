@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: jovies-app
-          image: github.com/Mayne0213/jovies:latest
+          image: ghcr.io/mayne0213/jovies:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
