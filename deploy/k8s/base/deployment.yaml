@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: jovies-app
-          image: gitea0213.kro.kr/bluemayne/jovies:latest
+          image: github.com/Mayne0213/jovies:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
