@@ -9,7 +9,7 @@ metadata:
     # cert-manager가 인증서를 자동으로 발급하도록 설정
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
-  ingressClassName: haproxy
+  ingressClassName: traefik
   # TLS 설정
   tls:
   - hosts:
