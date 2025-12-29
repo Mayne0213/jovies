@@ -6,5 +6,4 @@ resources:
   - application.yaml
 
   # Application deployments (prod and dev)
-  - application-prod.yaml
   - application-dev.yaml
