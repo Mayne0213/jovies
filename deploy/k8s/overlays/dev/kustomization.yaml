@@ -15,7 +15,7 @@ commonLabels:
 # 이미지 태그 설정
 images:
   - name: gitea0213.kro.kr/bluemayne/jovies
-    newTag: develop-sha-65353d3293cd3f801c70216d185183d87f2168fe
+    newTag: develop-sha-be509a4f6033c6c3055517bf0266e5c46d52490e
 
 patchesStrategicMerge:
   - deployment-patch.yaml
