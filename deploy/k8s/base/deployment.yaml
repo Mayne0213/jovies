@@ -5,7 +5,7 @@ metadata:
   labels:
     app: jovies-app
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: jovies-app
